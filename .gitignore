@@ -1,0 +1,5 @@
+backend/venv/
+frontend/node_modules/
+frontend/dist/
+backend/app/config/apps.json
+backend/app/config/shortcuts.json

@@ -1,0 +1,97 @@
+# Metrics stack: node_exporter (host stats) + cAdvisor (per-container stats)
+# + a small custom exporter (Intel GPU) all feed Prometheus, which Grafana
+# reads from. This is separate from the custom dashboard app (backend/,
+# frontend/), which runs as a systemd service on the host instead -- see
+# the top-level README for why the split.
+#
+# All four services here are labeled dashboard.hide=true so the dashboard
+# app's container-listing endpoint (used by the Apps tab's multi-select)
+# filters them out automatically -- you'd never want Prometheus itself
+# showing up as an "app" tile.
+
+services:
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    labels:
+      - "dashboard.hide=true"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    labels:
+      - "dashboard.hide=true"
+
+  gpu-exporter:
+    build: ./gpu-exporter
+    container_name: gpu-exporter
+    restart: unless-stopped
+    devices:
+      - /dev/dri:/dev/dri
+    ports:
+      - "9200:9200"
+    labels:
+      - "dashboard.hide=true"
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    # node-exporter uses network_mode: host, so Prometheus reaches it via
+    # localhost -- extra_hosts isn't needed for that, but is here in case
+    # you add other host-network targets later.
+    labels:
+      - "dashboard.hide=true"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Required for the dashboard app's iframe embed to work at all --
+      # without this Grafana sends X-Frame-Options: deny and the browser
+      # refuses to render it inside the iframe.
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      # Anonymous Viewer access so the iframe doesn't hit a login page.
+      # Reasonable for LAN-only; you can still log in as admin separately
+      # to edit dashboards.
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+    labels:
+      - "dashboard.hide=true"
+
+volumes:
+  prometheus-data:
+  grafana-data:
